@@ -34,7 +34,7 @@ class MainActivity : Activity() {
         }
 
         val statusText = TextView(this).apply {
-            text = "Reticulum Mesh Node\n\nSelect your paired RNode:"
+            text = "Reticulum Mesh Node\n\nEnsure RNode is paired in Android Settings first."
             textSize = 18f
             setPadding(0, 0, 0, 40)
         }
@@ -51,8 +51,6 @@ class MainActivity : Activity() {
                 if (selectedPos in pairedDevices.indices) {
                     val device = pairedDevices[selectedPos]
                     startMesh(device)
-                    text = "Connecting..."
-                    isEnabled = false
                 }
             }
         }
@@ -69,7 +67,7 @@ class MainActivity : Activity() {
         val permissions = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
             arrayOf(Manifest.permission.BLUETOOTH_CONNECT, Manifest.permission.BLUETOOTH_SCAN)
         } else {
-            arrayOf(Manifest.permission.ACCESS_FINE_LOCATION)
+            arrayOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION)
         }
 
         val missing = permissions.filter { checkSelfPermission(it) != PackageManager.PERMISSION_GRANTED }
@@ -85,7 +83,7 @@ class MainActivity : Activity() {
         if (requestCode == 101 && grantResults.all { it == PackageManager.PERMISSION_GRANTED }) {
             loadPairedDevices()
         } else {
-            Toast.makeText(this, "Bluetooth permissions required!", Toast.LENGTH_LONG).show()
+            Toast.makeText(this, "Permissions required to find RNode!", Toast.LENGTH_LONG).show()
         }
     }
 
@@ -98,6 +96,8 @@ class MainActivity : Activity() {
         }
 
         try {
+            // We use 'bondedDevices' (Paired devices). 
+            // You MUST pair the RNode in your Android Bluetooth Settings first!
             pairedDevices = adapter.bondedDevices.toList()
             val deviceNames = pairedDevices.map { it.name + " (" + it.address + ")" }
             
@@ -107,7 +107,7 @@ class MainActivity : Activity() {
             if (pairedDevices.isNotEmpty()) {
                 startBtn.isEnabled = true
             } else {
-                Toast.makeText(this, "No paired devices found.", Toast.LENGTH_LONG).show()
+                Toast.makeText(this, "No paired devices found. Pair your RNode first!", Toast.LENGTH_LONG).show()
             }
         } catch (e: SecurityException) {
             Toast.makeText(this, "Permission denied loading devices", Toast.LENGTH_SHORT).show()
@@ -115,15 +115,21 @@ class MainActivity : Activity() {
     }
 
     private fun startMesh(device: BluetoothDevice) {
-        val bridge = KotlinRNodeBridge(device)
-        
+        startBtn.text = "Connecting..."
+        startBtn.isEnabled = false
+
+        // Run EVERYTHING heavy in a background thread to prevent UI crashes
         Thread {
+            val bridge = KotlinRNodeBridge(device)
             val success = bridge.connect()
-            runOnUiThread {
-                if (success) {
-                    Toast.makeText(this, "BT Connected! Starting Reticulum...", Toast.LENGTH_SHORT).show()
-                    
-                    // Pass the bridge to Python
+            
+            if (success) {
+                runOnUiThread {
+                    Toast.makeText(this@MainActivity, "BT Connected! Starting Reticulum...", Toast.LENGTH_SHORT).show()
+                }
+                
+                try {
+                    // Python initialization (Creates Sockets) MUST be off the main thread
                     val py = Python.getInstance()
                     val wrapper = py.getModule("reticulum_wrapper")
                     val instance = wrapper.callAttr("get_instance", filesDir.absolutePath)
@@ -132,9 +138,20 @@ class MainActivity : Activity() {
                     instance.callAttr("set_bridge", bridge)
                     instance.callAttr("start_lxmf", "Android Node")
                     
-                    startBtn.text = "Mesh Online!"
-                } else {
-                    Toast.makeText(this, "Connection Failed! Is the RNode on?", Toast.LENGTH_LONG).show()
+                    runOnUiThread {
+                        startBtn.text = "Mesh Online!"
+                    }
+                } catch (e: Exception) {
+                    e.printStackTrace()
+                    runOnUiThread {
+                        Toast.makeText(this@MainActivity, "Python Error: \", Toast.LENGTH_LONG).show()
+                        startBtn.isEnabled = true
+                        startBtn.text = "Connect & Start RNode"
+                    }
+                }
+            } else {
+                runOnUiThread {
+                    Toast.makeText(this@MainActivity, "Connection Failed! Is the RNode on?", Toast.LENGTH_LONG).show()
                     startBtn.isEnabled = true
                     startBtn.text = "Connect & Start RNode"
                 }
