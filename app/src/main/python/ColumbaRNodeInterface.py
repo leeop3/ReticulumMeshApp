@@ -16,11 +16,17 @@ class ColumbaRNodeInterface(RNS.Interfaces.Interface.Interface):
         super().__init__()
         self.owner = owner
         self.name = name
-        self.bridge = bridge # The Kotlin Bluetooth Bridge
+        self.bridge = bridge
         self.online = True
+        self.IN = True
+        self.OUT = True
+        self.bitrate = 10000
+        self.HW_MTU = 500
         
-        # Provision Radio
+        # Provision Radio immediately upon connection
+        RNS.log(f"Setting RNode to {frequency} Hz, SF {sf}")
         self.set_frequency(frequency)
+        time.sleep(0.2)
         self.set_sf(sf)
 
     def set_frequency(self, freq):
@@ -37,9 +43,13 @@ class ColumbaRNodeInterface(RNS.Interfaces.Interface.Interface):
             self.bridge.writeSync(kiss_frame)
 
     def read_loop(self):
-        # Called by a background thread to poll the Bluetooth socket
+        RNS.log("RNode read loop started")
         while self.online:
-            raw = self.bridge.read()
-            if raw:
-                RNS.Transport.inbound(bytes(raw), self)
-            time.sleep(0.01)
+            try:
+                raw = self.bridge.read()
+                if raw:
+                    RNS.Transport.inbound(bytes(raw), self)
+                time.sleep(0.01)
+            except Exception as e:
+                RNS.log(f"RNode read error: {e}", RNS.LOG_ERROR)
+                time.sleep(0.1)
