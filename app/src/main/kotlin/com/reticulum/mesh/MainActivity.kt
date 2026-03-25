@@ -96,8 +96,6 @@ class MainActivity : Activity() {
         }
 
         try {
-            // We use 'bondedDevices' (Paired devices). 
-            // You MUST pair the RNode in your Android Bluetooth Settings first!
             pairedDevices = adapter.bondedDevices.toList()
             val deviceNames = pairedDevices.map { it.name + " (" + it.address + ")" }
             
@@ -129,12 +127,10 @@ class MainActivity : Activity() {
                 }
                 
                 try {
-                    // Python initialization (Creates Sockets) MUST be off the main thread
                     val py = Python.getInstance()
                     val wrapper = py.getModule("reticulum_wrapper")
                     val instance = wrapper.callAttr("get_instance", filesDir.absolutePath)
                     
-                    // Handshake between Kotlin and Python
                     instance.callAttr("set_bridge", bridge)
                     instance.callAttr("start_lxmf", "Android Node")
                     
@@ -144,7 +140,8 @@ class MainActivity : Activity() {
                 } catch (e: Exception) {
                     e.printStackTrace()
                     runOnUiThread {
-                        Toast.makeText(this@MainActivity, "Python Error: \", Toast.LENGTH_LONG).show()
+                        // Fixed string concatenation here!
+                        Toast.makeText(this@MainActivity, "Python Error: " + e.message, Toast.LENGTH_LONG).show()
                         startBtn.isEnabled = true
                         startBtn.text = "Connect & Start RNode"
                     }
