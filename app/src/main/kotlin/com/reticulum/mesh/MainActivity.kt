@@ -21,7 +21,6 @@ import java.io.ByteArrayOutputStream
 class MainActivity : Activity() {
     private lateinit var deviceSpinner: Spinner
     private lateinit var startBtn: Button
-    private lateinit var announceBtn: Button
     private lateinit var sendBtn: Button
     private lateinit var msgInput: EditText
     private lateinit var destInput: EditText
@@ -38,18 +37,14 @@ class MainActivity : Activity() {
             setPadding(40, 40, 40, 40)
         }
 
-        statusText = TextView(this).apply { text = "Mesh Status: Offline"; textSize = 16f }
-        
-        // --- Connection Section ---
+        statusText = TextView(this).apply { text = "Mesh Status: Offline"; textSize = 16f; setPadding(0,0,0,20) }
         deviceSpinner = Spinner(this)
         startBtn = Button(this).apply { text = "Connect RNode" }
         
-        // --- Messaging Section (Hidden until connected) ---
-        destInput = EditText(this).apply { hint = "Destination Hex Hash"; visibility = android.view.View.GONE }
+        destInput = EditText(this).apply { hint = "Recipient Hash (e.g. 8f2...)"; visibility = android.view.View.GONE }
         msgInput = EditText(this).apply { hint = "Message Text"; visibility = android.view.View.GONE }
         val attachBtn = Button(this).apply { text = "Attach Image"; visibility = android.view.View.GONE }
         sendBtn = Button(this).apply { text = "Send Message"; visibility = android.view.View.GONE }
-        announceBtn = Button(this).apply { text = "Manual Announce"; visibility = android.view.View.GONE }
 
         startBtn.setOnClickListener {
             val selectedPos = deviceSpinner.selectedItemPosition
@@ -64,17 +59,8 @@ class MainActivity : Activity() {
         sendBtn.setOnClickListener {
             val dest = destInput.text.toString()
             val msg = msgInput.text.toString()
-            if (dest.length == 20 || dest.length == 32) { // Basic RNS hash length check
-                sendMessage(dest, msg)
-            } else {
-                Toast.makeText(this, "Invalid Destination Hash", Toast.LENGTH_SHORT).show()
-            }
-        }
-
-        announceBtn.setOnClickListener {
-            val py = Python.getInstance()
-            py.getModule("reticulum_wrapper").callAttr("get_instance").callAttr("announce_now")
-            Toast.makeText(this, "Announce Sent!", Toast.LENGTH_SHORT).show()
+            if (dest.length >= 10) sendMessage(dest, msg)
+            else Toast.makeText(this, "Enter valid Destination Hash", Toast.LENGTH_SHORT).show()
         }
 
         layout.addView(statusText)
@@ -84,34 +70,41 @@ class MainActivity : Activity() {
         layout.addView(msgInput)
         layout.addView(attachBtn)
         layout.addView(sendBtn)
-        layout.addView(announceBtn)
         setContentView(layout)
 
         checkPermissionsAndLoadDevices()
     }
 
     private fun startMesh(device: BluetoothDevice) {
-        startBtn.text = "Connecting..."
+        startBtn.text = "Starting..."
         startBtn.isEnabled = false
         Thread {
-            val bridge = KotlinRNodeBridge(device)
-            if (bridge.connect()) {
-                val py = Python.getInstance()
-                val wrapper = py.getModule("reticulum_wrapper")
-                val instance = wrapper.callAttr("get_instance", filesDir.absolutePath)
-                instance.callAttr("set_bridge", bridge)
-                val myHash = instance.callAttr("start_lxmf", "Android Node").toString()
-                
-                runOnUiThread {
-                    statusText.text = "Online. My Hash: " + myHash
-                    startBtn.visibility = android.view.View.GONE
-                    deviceSpinner.visibility = android.view.View.GONE
-                    destInput.visibility = android.view.View.VISIBLE
-                    msgInput.visibility = android.view.View.VISIBLE
-                    sendBtn.visibility = android.view.View.VISIBLE
-                    announceBtn.visibility = android.view.View.VISIBLE
-                    findViewById<Button>(sendBtn.id - 1)?.let { it.visibility = android.view.View.VISIBLE } // Hack for attachBtn
-                    Toast.makeText(this, "Mesh Ready!", Toast.LENGTH_SHORT).show()
+            try {
+                val bridge = KotlinRNodeBridge(device)
+                if (bridge.connect()) {
+                    val py = Python.getInstance()
+                    val wrapper = py.getModule("reticulum_wrapper")
+                    val instance = wrapper.callAttr("get_instance", filesDir.absolutePath)
+                    
+                    instance.callAttr("set_bridge", bridge)
+                    val myHash = instance.callAttr("start_lxmf", "Android Node").toString()
+                    
+                    runOnUiThread {
+                        statusText.text = "Online! My Identity Hash: " + myHash
+                        startBtn.visibility = android.view.View.GONE
+                        deviceSpinner.visibility = android.view.View.GONE
+                        destInput.visibility = android.view.View.VISIBLE
+                        msgInput.visibility = android.view.View.VISIBLE
+                        sendBtn.visibility = android.view.View.VISIBLE
+                        attachBtn.visibility = android.view.View.VISIBLE
+                        Toast.makeText(this, "Mesh Connected to RNode", Toast.LENGTH_SHORT).show()
+                    }
+                }
+            } catch (e: Exception) {
+                runOnUiThread { 
+                    Toast.makeText(this, "Init Error: " + e.message, Toast.LENGTH_LONG).show()
+                    startBtn.isEnabled = true
+                    startBtn.text = "Retry Connect"
                 }
             }
         }.start()
@@ -124,32 +117,29 @@ class MainActivity : Activity() {
                 .callAttr("send_message", dest, msg, selectedImageBytes).toBoolean()
             runOnUiThread {
                 if (success) {
-                    Toast.makeText(this, "Sent!", Toast.LENGTH_SHORT).show()
+                    Toast.makeText(this, "Queued for Delivery!", Toast.LENGTH_SHORT).show()
                     msgInput.setText(""); selectedImageBytes = null
                 } else {
-                    Toast.makeText(this, "Send Failed", Toast.LENGTH_SHORT).show()
+                    Toast.makeText(this, "Failed to Send", Toast.LENGTH_SHORT).show()
                 }
             }
         }.start()
     }
 
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        super.onActivityResult(requestCode, resultCode, data)
         if (requestCode == 102 && resultCode == RESULT_OK && data != null) {
             val uri = data.data ?: return
-            processImage(uri)
+            val inputStream = contentResolver.openInputStream(uri)
+            val original = BitmapFactory.decodeStream(inputStream)
+            
+            // WebP Compression - SF8 friendly
+            val scaled = Bitmap.createScaledBitmap(original, 300, 300, true)
+            val out = ByteArrayOutputStream()
+            scaled.compress(Bitmap.CompressFormat.WEBP, 30, out)
+            selectedImageBytes = out.toByteArray()
+            Toast.makeText(this, "Image Attached (" + (selectedImageBytes!!.size / 1024) + " KB)", Toast.LENGTH_SHORT).show()
         }
-    }
-
-    private fun processImage(uri: Uri) {
-        val inputStream = contentResolver.openInputStream(uri)
-        val original = BitmapFactory.decodeStream(inputStream)
-        
-        // CRITICAL for LoRa: Resize to 300px and compress heavily (~8KB)
-        val scaled = Bitmap.createScaledBitmap(original, 300, 300, true)
-        val out = ByteArrayOutputStream()
-        scaled.compress(Bitmap.CompressFormat.WEBP, 30, out)
-        selectedImageBytes = out.toByteArray()
-        Toast.makeText(this, "Image Ready (" + (selectedImageBytes!!.size / 1024) + " KB)", Toast.LENGTH_SHORT).show()
     }
 
     private fun checkPermissionsAndLoadDevices() {
@@ -166,7 +156,7 @@ class MainActivity : Activity() {
     private fun loadPairedDevices() {
         val btManager = getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager
         pairedDevices = btManager.adapter.bondedDevices.toList()
-        val adapter = ArrayAdapter(this, android.R.layout.simple_spinner_dropdown_item, pairedDevices.map { it.name })
-        deviceSpinner.adapter = adapter
+        val names = pairedDevices.map { it.name ?: "Unknown RNode" }
+        deviceSpinner.adapter = ArrayAdapter(this, android.R.layout.simple_spinner_dropdown_item, names)
     }
 }

@@ -13,63 +13,81 @@ class ReticulumWrapper:
         self.storage_path = storage_path
         self.router = None
         self.rnode_interface = None
+        self.rns_instance = None # Initialize to None to prevent AttributeError
         _global_wrapper_instance = self
         
         if not os.path.exists(storage_path):
             os.makedirs(storage_path)
 
-        # CRITICAL: Create a minimal config file to prevent RNS from 
-        # trying to open restricted sockets or logging to /
+        # CRITICAL: Hard-disable AutoInterface and Sockets
         config_path = os.path.join(storage_path, "config")
-        if not os.path.exists(config_path):
-            with open(config_path, "w") as f:
-                f.write("[reticulum]\n")
-                f.write("enable_transport = False\n")
-                f.write("share_instance = No\n")
-                f.write("[logging]\n")
-                f.write("loglevel = 4\n")
+        with open(config_path, "w") as f:
+            f.write("[reticulum]\n")
+            f.write("enable_transport = False\n")
+            f.write("share_instance = No\n")
+            f.write("is_gateway = No\n")
+            f.write("[logging]\n")
+            f.write("loglevel = 4\n")
+            f.write("[interfaces]\n")
+            f.write("  [[TCP Server Interface]]\n")
+            f.write("    type = TCPInterface\n")
+            f.write("    enabled = No\n")
+            f.write("  [[UDP Interface]]\n")
+            f.write("    type = UDPInterface\n")
+            f.write("    enabled = No\n")
 
-        # Initialize Reticulum with the explicit safe config
-        self.rns_instance = RNS.Reticulum(configdir=storage_path)
-        RNS.log(f"RNS Initialized successfully at {storage_path}")
+        try:
+            # Initialize Reticulum
+            self.rns_instance = RNS.Reticulum(configdir=storage_path)
+            RNS.log(f"RNS Core started at {storage_path}")
+        except Exception as e:
+            RNS.log(f"RNS Startup Error: {e}", RNS.LOG_ERROR)
 
     def set_bridge(self, bridge):
-        RNS.log("Connecting RNode Bridge...")
+        if self.rns_instance is None:
+            RNS.log("Cannot set bridge: RNS instance not running", RNS.LOG_ERROR)
+            return
+            
+        RNS.log("Connecting RNode via Kotlin Bridge...")
         self.rnode_interface = ColumbaRNodeInterface(
             owner=self.rns_instance,
-            name="RNode_433",
+            name="RNode_BT",
             bridge=bridge,
             frequency=433025000,
             sf=8
         )
+        # Manually attach to transport
         RNS.Transport.interfaces.append(self.rnode_interface)
         threading.Thread(target=self.rnode_interface.read_loop, daemon=True).start()
 
     def start_lxmf(self, user_name):
-        # Initialize LXMF Router
+        if self.rns_instance is None: return "ERROR"
         self.router = LXMF.LXMRouter(storagepath=self.storage_path, display_name=user_name)
         self.local_identity = self.router.get_identity()
         return RNS.hexrep(self.local_identity.hash)
 
     def send_message(self, dest_hash_hex, content, image_bytes=None):
+        if not self.router: return False
         try:
-            dest_hash = RNS.full_hash(bytes.fromhex(dest_hash_hex))
+            # Clean hex string and convert to bytes
+            clean_hex = dest_hash_hex.replace("<", "").replace(">", "").replace(" ", "")
+            dest_hash = bytes.fromhex(clean_hex)
+            
+            # Create a 'Single' destination
             destination = RNS.Destination(None, RNS.Destination.OUT, RNS.Destination.SINGLE, "lxmf", "delivery")
             destination.hash = dest_hash
             
-            # Use LXMF to wrap the message (handles chunking/reliability)
             lxmf_msg = LXMF.LXMessage(
                 destination, 
                 self.local_identity, 
                 content, 
-                title="App Transfer", 
+                title="RNS Mesh Transfer", 
                 fields={"image": image_bytes} if image_bytes else None
             )
-            
             self.router.handle_outbound(lxmf_msg)
             return True
         except Exception as e:
-            RNS.log(f"Send error: {e}", RNS.LOG_ERROR)
+            print(f"Error sending: {e}")
             return False
 
     def announce_now(self):
