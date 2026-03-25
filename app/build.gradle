@@ -1,0 +1,30 @@
+plugins {
+    id 'com.android.application'
+    id 'com.chaquo.python'
+}
+
+android {
+    namespace 'com.reticulum.mesh'
+    compileSdk 34
+
+    defaultConfig {
+        applicationId "com.reticulum.mesh"
+        minSdk 26
+        targetSdk 34
+        versionCode 1
+        versionName "1.0"
+
+        python {
+            version "3.10"
+            pip {
+                install "rns"
+                install "lxmf"
+                install "umsgpack"
+            }
+        }
+        
+        ndk {
+            abiFilters "armeabi-v7a", "arm64-v8a", "x86", "x86_64"
+        }
+    }
+}
