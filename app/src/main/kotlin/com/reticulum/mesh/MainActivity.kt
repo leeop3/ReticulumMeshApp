@@ -1,15 +1,14 @@
 package com.reticulum.mesh
 
+import android.app.Activity
 import android.os.Bundle
-import androidx.activity.ComponentActivity
-import androidx.activity.compose.setContent
-import androidx.compose.foundation.layout.Column
-import androidx.compose.material3.Text
-import androidx.compose.material3.Button
+import android.widget.Button
+import android.widget.LinearLayout
+import android.widget.TextView
 import com.chaquo.python.Python
 import com.chaquo.python.android.AndroidPlatform
 
-class MainActivity : ComponentActivity() {
+class MainActivity : Activity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         
@@ -18,14 +17,31 @@ class MainActivity : ComponentActivity() {
             Python.start(AndroidPlatform(this))
         }
 
-        setContent {
-            Column {
-                Text(text = "Reticulum Mesh Node")
-                Button(onClick = { startMesh() }) {
-                    Text("Start RNode (433MHz)")
-                }
+        // Create a classic Android UI Programmatically
+        val layout = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(60, 60, 60, 60)
+        }
+
+        val statusText = TextView(this).apply {
+            text = "Reticulum Mesh Node\n\nEnsure your RNode is paired in your phone's Bluetooth settings first."
+            textSize = 18f
+            setPadding(0, 0, 0, 60)
+        }
+
+        val startBtn = Button(this).apply {
+            text = "Start RNode (433MHz)"
+            setOnClickListener {
+                startMesh()
+                text = "RNode Started! Check Logcat."
+                isEnabled = false
             }
         }
+
+        layout.addView(statusText)
+        layout.addView(startBtn)
+
+        setContentView(layout)
     }
 
     private fun startMesh() {
